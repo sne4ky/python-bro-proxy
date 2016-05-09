@@ -7,29 +7,87 @@ import sys
 import socket
 import threading
 import pprint
+from StringIO import StringIO
+from mimetools import Message
+import signal
+
+kill = False
+
+def int_handler(signum, frame):
+    print "Exiting..."
+    kill = True
+
+signal.signal(signal.SIGINT, int_handler)
+
+def get_host(text):
+    '''
+    Parse HTTP header and extract host. Also extract Location in case of 
+    redirection 301
+    '''
+    try:
+        request_line, headers_alone = text.split('\r\n', 1)
+    except ValueError:
+        return None
+    headers = Message(StringIO(headers_alone))
+    if 'Host' in headers:
+        return headers['Host']
+    elif 'Location' in headers:
+        return headers['Location']
+    else:
+        return None
 
 def receive_from(sock):
     sock.settimeout(2)
+    global kill
     buff = ''
-    while(True):
+    while True and not kill:
         try:
             new_data = sock.recv(4096)
         except socket.timeout:
             return buff
-        # import pdb; pdb.set_trace()
         if not new_data:
             break
         buff += new_data
     return buff
 
-
 def proxy_handler(c_socket, c_host, c_port):
-    local_buffer = receive_from(c_socket)
-    print '[*] Received %d bytes' % len(local_buffer)
+    global kill
+    while True and not kill:
+        request = receive_from(c_socket)
+        print '[*] Received %d bytes' % len(request)
+        
+        if not request:
+            continue
     
-    pp = pprint.PrettyPrinter()
-    pp.pprint(local_buffer)
+        # Extract the host and make dns query
+        host = get_host(request)
+        if host:
+            dst_ip = socket.gethostbyname(host)
+        else:
+            sys.stderr.write('Could not extract host from request. Aborting...\n')
+            exit(1)
     
+        # Create socket to sent request to remote host
+        s2_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s2_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s2_socket.settimeout(2)
+    
+        # Connect to host and send data
+        s2_socket.connect((host, 80))
+        print 'Sending message to host %s, ip %s' % (host, dst_ip)
+        s2_socket.sendall(request)
+    
+        # Receive response from host
+        try:
+            response = s2_socket.recv(100000)
+        except socket.timeout:
+            print 'Received response'
+        
+        
+    
+        # Forward response to client
+        c_socket.sendall(response)
+
 
 if __name__=='__main__':
     '''
