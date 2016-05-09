@@ -37,7 +37,6 @@ def get_host(text):
         return None
 
 def receive_from(sock):
-    sock.settimeout(2)
     global kill
     buff = ''
     while True and not kill:
@@ -54,18 +53,21 @@ def proxy_handler(c_socket, c_host, c_port):
     global kill
     while True and not kill:
         request = receive_from(c_socket)
-        print '[*] Received %d bytes' % len(request)
         
         if not request:
             continue
-    
+
+        print '[*] Received %d bytes' % len(request)
         # Extract the host and make dns query
         host = get_host(request)
+        print 'Extracted host %s' % host
         if host:
             dst_ip = socket.gethostbyname(host)
         else:
             sys.stderr.write('Could not extract host from request. Aborting...\n')
             exit(1)
+
+        print 'Extracted IP %s from host %s' % (dst_ip, host)
     
         # Create socket to sent request to remote host
         s2_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -79,11 +81,12 @@ def proxy_handler(c_socket, c_host, c_port):
     
         # Receive response from host
         try:
-            response = s2_socket.recv(100000)
+            response = receive_from(s2_socket)
         except socket.timeout:
             print 'Received response'
-        
-        
+            
+        pp = pprint.PrettyPrinter()
+        pp.pprint(response)
     
         # Forward response to client
         c_socket.sendall(response)
@@ -101,14 +104,16 @@ if __name__=='__main__':
     # Bind the socket to listen to HTTP on localhost
     s_socket.bind(('localhost', 80))
 
-    # Only 1 client connection allowed
-    s_socket.listen(1)
+    # 20 clients allowed (NOTE: they might be from the same browser)
+    s_socket.listen(20)
 
     # Receive connection
-    c_socket, addr = s_socket.accept()
-    print '[*] Received connection from %s:%d' % (addr[0], addr[1])
-
-    proxy_thread = threading.Thread(target=proxy_handler,
-                                    args=(c_socket, addr[0], addr[1]))
-
-    proxy_thread.start()
+    while True:
+        c_socket, addr = s_socket.accept()
+        c_socket.settimeout(2)
+        print '[*] Received connection from %s:%d' % (addr[0], addr[1])
+    
+        proxy_thread = threading.Thread(target=proxy_handler,
+                                        args=(c_socket, addr[0], addr[1]))
+    
+        proxy_thread.start()
