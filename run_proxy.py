@@ -10,8 +10,11 @@ import pprint
 from StringIO import StringIO
 from mimetools import Message
 import signal
+from bs4 import BeautifulSoup
+import gzip
 
 kill = False
+banned_list = set(['104.130.42.129'])
 
 def int_handler(signum, frame):
     print "Exiting..."
@@ -19,16 +22,23 @@ def int_handler(signum, frame):
 
 signal.signal(signal.SIGINT, int_handler)
 
-def get_host(text):
+def get_headers_dict(text):
     '''
-    Parse HTTP header and extract host. Also extract Location in case of 
-    redirection 301
+    Get a dictionary with the headers of the HTML message.
     '''
     try:
         request_line, headers_alone = text.split('\r\n', 1)
     except ValueError:
         return None
     headers = Message(StringIO(headers_alone))
+    return headers
+
+def get_host(text):
+    '''
+    Parse HTTP header and extract host. Use the Host field, or the Location
+    field in case it is a 301 Moved resource.
+    '''
+    headers = get_headers_dict(text)
     if 'Host' in headers:
         return headers['Host']
     elif 'Location' in headers:
@@ -37,6 +47,9 @@ def get_host(text):
         return None
 
 def receive_from(sock):
+    '''
+    Receive data from socket.
+    '''
     global kill
     buff = ''
     while True and not kill:
@@ -48,6 +61,51 @@ def receive_from(sock):
             break
         buff += new_data
     return buff
+    
+def is_banned(ip):
+    global banned_list
+    if ip in banned_list:
+        print 'IP %s IS BANNED!!!!!!!!!!' % ip
+        return True
+    else:
+        return False
+        
+def delete_field(field, text):
+    if '\r\n\r\n' in text:
+        headers, body = text.split('\r\n\r\n')
+    else:
+        headers = text
+        body = ''
+    good_headers = filter(lambda x: field + ':' not in x,
+                          headers.split('\n'))
+    return '\n'.join(good_headers) + '\r\n\r\n' + body
+
+        
+def inject_warning(response):
+    '''
+    Injects a JavaScript alert on top of the page, if it is an HTML.
+    '''
+    headers = get_headers_dict(response)
+    
+    # If it is not html, we cannot inject anything
+    if 'text/html' not in headers['Content-Type']:
+        print 'This is not HTML, this is a %s' % headers['Content-Type']
+        return response
+        
+    # Do the injection
+    alert_msg = 'This IP address is banned. Please proceed carefully'
+    i_msg = response.replace('<head>',
+                              '<head>\r\n<script>alert("%s");</script>\r\n' \
+                             % alert_msg,
+                              1)
+
+    # Debugging
+    with open('/home/marcos/Desktop/alert.html', 'w') as a_fd:
+                a_fd.write(i_msg)
+    print "Written injected HTML to file"
+
+    return i_msg
+    # import pdb; pdb.set_trace()
 
 def proxy_handler(c_socket, c_host, c_port):
     global kill
@@ -69,7 +127,7 @@ def proxy_handler(c_socket, c_host, c_port):
 
         print 'Extracted IP %s from host %s' % (dst_ip, host)
     
-        # Create socket to sent request to remote host
+        # Create socket to send request to remote host
         s2_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s2_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s2_socket.settimeout(2)
@@ -77,6 +135,11 @@ def proxy_handler(c_socket, c_host, c_port):
         # Connect to host and send data
         s2_socket.connect((host, 80))
         print 'Sending message to host %s, ip %s' % (host, dst_ip)
+        
+        # Tamper the headers. We do not want an encoded response
+        request = delete_field('Accept-Encoding', request)
+        
+        # Send the request
         s2_socket.sendall(request)
     
         # Receive response from host
@@ -85,11 +148,17 @@ def proxy_handler(c_socket, c_host, c_port):
         except socket.timeout:
             print 'Received response'
             
-        pp = pprint.PrettyPrinter()
-        pp.pprint(response)
-    
+        # Inject warning in HTML if the IP is not trusted
+        if is_banned(dst_ip):
+            w_response = inject_warning(response)
+        else:
+            w_response = response
+            
+        # pp = pprint.PrettyPrinter()
+        # pp.pprint(response)
+
         # Forward response to client
-        c_socket.sendall(response)
+        c_socket.sendall(w_response)
 
 
 if __name__=='__main__':
