@@ -99,11 +99,6 @@ def inject_warning(response):
                              % alert_msg,
                               1)
 
-    # Debugging
-    with open('/home/marcos/Desktop/alert.html', 'w') as a_fd:
-                a_fd.write(i_msg)
-    print "Written injected HTML to file"
-
     return i_msg
     # import pdb; pdb.set_trace()
 
