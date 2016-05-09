@@ -1,26 +1,31 @@
 #!/usr/bin/env python2
 '''
-Runs a proxy on localhost. Right now it only replicates traffic.
+Runs a proxy on localhost. Shows a banner in the page if it visits one of the
+IPs from "banned-ips.txt", located in the same folder as this file.
 '''
 
 import sys
 import socket
 import threading
-import pprint
 from StringIO import StringIO
 from mimetools import Message
 import signal
-from bs4 import BeautifulSoup
-import gzip
 
-kill = False
-banned_list = set(['104.130.42.129'])
+KILL = False
 
 def int_handler(signum, frame):
     print "Exiting..."
-    kill = True
+    KILL = True
 
 signal.signal(signal.SIGINT, int_handler)
+
+BANNED_LIST = set([])
+
+def parse_banned_ips(filename):
+    global BANNED_LIST
+    with open(filename) as fd:
+        for line in fd:
+            BANNED_LIST.add(line.strip())
 
 def get_headers_dict(text):
     '''
@@ -50,9 +55,9 @@ def receive_from(sock):
     '''
     Receive data from socket.
     '''
-    global kill
+    global KILL
     buff = ''
-    while True and not kill:
+    while True and not KILL:
         try:
             new_data = sock.recv(4096)
         except socket.timeout:
@@ -63,14 +68,20 @@ def receive_from(sock):
     return buff
     
 def is_banned(ip):
-    global banned_list
-    if ip in banned_list:
+    '''
+    Check if an Ip address is in the banned list
+    '''
+    global BANNED_LIST
+    if ip in BANNED_LIST:
         print 'IP %s IS BANNED!!!!!!!!!!' % ip
         return True
     else:
         return False
         
 def delete_field(field, text):
+    '''
+    Delete a field from the HTTP headers
+    '''
     if '\r\n\r\n' in text:
         headers, body = text.split('\r\n\r\n')
     else:
@@ -83,7 +94,7 @@ def delete_field(field, text):
         
 def inject_warning(response):
     '''
-    Injects a JavaScript alert on top of the page, if it is an HTML.
+    Injects a JavaScript alert on top of the page, only in HTML pages.
     '''
     headers = get_headers_dict(response)
     
@@ -103,14 +114,18 @@ def inject_warning(response):
     # import pdb; pdb.set_trace()
 
 def proxy_handler(c_socket, c_host, c_port):
-    global kill
-    while True and not kill:
+    '''
+    Thread that processes client requests.
+    '''
+    global KILL
+    while True and not KILL:
         request = receive_from(c_socket)
         
         if not request:
             continue
 
         print '[*] Received %d bytes' % len(request)
+        
         # Extract the host and make dns query
         host = get_host(request)
         print 'Extracted host %s' % host
@@ -149,17 +164,18 @@ def proxy_handler(c_socket, c_host, c_port):
         else:
             w_response = response
             
-        # pp = pprint.PrettyPrinter()
-        # pp.pprint(response)
-
         # Forward response to client
         c_socket.sendall(w_response)
 
 
 if __name__=='__main__':
     '''
-    Open proxy on localhost
+    Open proxy on localhost port 80, and listen to incoming connections.
+    Inject a banner on top of the page when contacting banned IPs.
     '''
+    # Parse banned IPs list
+    parse_banned_ips('./banned-ips.txt')
+    
     # Create OS socket
     s_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -179,5 +195,4 @@ if __name__=='__main__':
     
         proxy_thread = threading.Thread(target=proxy_handler,
                                         args=(c_socket, addr[0], addr[1]))
-    
         proxy_thread.start()
