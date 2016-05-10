@@ -14,6 +14,7 @@ import signal
 KILL = False
 
 def int_handler(signum, frame):
+    global KILL
     print "Exiting..."
     KILL = True
 
@@ -140,7 +141,7 @@ def proxy_handler(c_socket, c_host, c_port):
         # Create socket to send request to remote host
         s2_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s2_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s2_socket.settimeout(2)
+        s2_socket.settimeout(1)
     
         # Connect to host and send data
         s2_socket.connect((host, 80))
@@ -190,7 +191,7 @@ if __name__=='__main__':
     # Receive connection
     while True:
         c_socket, addr = s_socket.accept()
-        c_socket.settimeout(2)
+        c_socket.settimeout(1)
         print '[*] Received connection from %s:%d' % (addr[0], addr[1])
     
         proxy_thread = threading.Thread(target=proxy_handler,
